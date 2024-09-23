@@ -1,0 +1,277 @@
+const express = require('express');
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const app = express();
+const PORT = 26000; 
+
+app.use(express.json());
+
+const users = []; 
+const reviews = {}; 
+
+// Task 1: Get the book list
+app.get('/books', async (req, res) => {
+  try {
+    const response = await axios.get('https://openlibrary.org/search.json?q=book');
+    const books = response.data.docs.map(book => ({
+      title: book.title || 'No Title',
+      author: book.author_name ? book.author_name[0] : 'Unknown Author'
+    }));
+    res.json(books);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching book list' });
+  }
+});
+
+// Task 2: Get the books based on ISBN
+app.get('/books/isbn/:isbn', async (req, res) => {
+  const isbn = req.params.isbn;
+  try {
+    const response = await axios.get(`https://openlibrary.org/search.json?isbn=${isbn}`);
+    const book = response.data.docs[0];
+    if (book) {
+      res.json({
+        title: book.title,
+        author: book.author_name ? book.author_name[0] : 'Unknown Author'
+      });
+    } else {
+      res.status(404).json({ error: 'No book found with this ISBN' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching book by ISBN' });
+  }
+});
+
+// Task 3: Get all books by Author
+app.get('/books/author/:author', async (req, res) => {
+  const author = req.params.author;
+  try {
+    const response = await axios.get(`https://openlibrary.org/search.json?author=${encodeURIComponent(author)}`);
+    const books = response.data.docs.map(book => ({
+      isbn: book.isbn ? book.isbn[0] : 'Unknown ISBN',
+      title: book.title || 'No Title',
+      review: `Review for the book ${book.title}`
+    }));
+    res.json({ booksByAuthor: books });
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching books by author' });
+  }
+});
+
+// Task 4: Get all books by Title
+app.get('/books/title/:title', async (req, res) => {
+  const title = req.params.title;
+  try {
+    const response = await axios.get(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}`);
+    const books = response.data.docs.map(book => ({
+      isbn: book.isbn ? book.isbn[0] : 'Unknown ISBN',
+      title: book.title || 'No Title',
+      review: `Review for the book ${book.title}`
+    }));
+    res.json({ booksByTitle: books });
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching books by title' });
+  }
+});
+
+// Task 5: Get book review (Simulated)
+app.get('/books/review/:isbn', async (req, res) => {
+  const isbn = req.params.isbn;
+  try {
+    const response = await axios.get(`https://openlibrary.org/search.json?isbn=${isbn}`);
+    const book = response.data.docs[0];
+    if (book) {
+      res.json({
+        title: book.title,
+        author: book.author_name ? book.author_name[0] : 'Unknown Author',
+        reviews: reviews[isbn] || []
+      });
+    } else {
+      res.status(404).json({ error: 'No book found with this ISBN' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching book reviews' });
+  }
+});
+
+// Task 6: Register New User
+app.post('/users/register', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    try {
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        res.status(201).json({ message: 'User registered successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Error registering user' });
+    }
+});
+
+// Task 7: Login as a Registered User
+const defaultUser = {
+    username: 'testUser',
+    password: 'password123'
+};
+
+// Automatically register the default user
+app.post('/register/default', async (req, res) => {
+    const hashedPassword = await bcrypt.hash(defaultUser.password, 10);
+    
+    const newUser = { username: defaultUser.username, password: hashedPassword };
+    users.push(newUser);
+    
+    res.json({ message: 'User registered successfully', user: newUser });
+});
+
+// Task 7: Login as a Registered User
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    
+    const user = users.find(user => user.username === username);
+    
+    if (user && await bcrypt.compare(password, user.password)) {
+      const token = jwt.sign({ username: user.username }, 'secret', { expiresIn: '1h' });
+      res.json({ message: 'Login successful', token });
+    } else {
+      res.status(401).json({ message: 'Invalid credentials' });
+    }
+});
+
+// Automatically register default user on server start
+app.listen(PORT, async () => {
+    const existingUser = users.find(user => user.username === defaultUser.username);
+    if (!existingUser) {
+      await app.post('/register/default', (req, res) => {});
+    }
+    console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+// Middleware for protected routes
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+  jwt.verify(token, 'secretKey', (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+const axios = require('axios');
+
+// The JWT token you got from the login response
+const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InRlc3RVc2VyIiwiaWF0IjoxNzI3MTEyNzExLCJleHAiOjE3MjcxMTYzMTF9.kjORJEE-Q7JNJjlX73yyIw4LalJ-m4cBZOVWrTLkpjw'
+// The ISBN for the book
+const isbn = '9780132350884'; // Example ISBN
+
+// The review you're submitting
+const review = 'good';
+
+// Set up headers with the token
+const config = {
+  headers: { Authorization: `Bearer ${token}` }
+};
+
+// Make the PUT request to add/modify a review
+axios.put(`http://localhost:26000/books/${isbn}/reviews?review=${review}`, {}, config)
+  .then(response => {
+    console.log(response.data);
+  })
+  .catch(error => {
+    console.log(error.response ? error.response.data : error.message);
+  });
+
+// Task 8: Add/Modify a Book Review (Using Query Parameters)
+app.put('/books/:isbn/reviews', authenticateToken, (req, res) => {
+  const { isbn } = req.params;
+  const { rating, comment } = req.query;  // Extract rating and comment from query parameters
+  const username = req.user.username;
+
+  if (!rating || !comment) {
+    return res.status(400).json({ error: 'Rating and comment are required' });
+  }
+
+  if (!reviews[isbn]) {
+    reviews[isbn] = [];
+  }
+
+  const userReviewIndex = reviews[isbn].findIndex(r => r.username === username);
+  if (userReviewIndex >= 0) {
+    reviews[isbn][userReviewIndex] = { rating, comment, username };
+  } else {
+    reviews[isbn].push({ rating, comment, username });
+  }
+
+  res.json({ message: `Review for the book with ISBN ${isbn} has been added or updated.` });
+});
+
+// Task 9: Delete a Book Review (Protected Route)
+app.delete('/books/:isbn/reviews', authenticateToken, (req, res) => {
+  const { isbn } = req.params;
+  const username = req.user.username;
+
+  if (!reviews[isbn]) return res.status(404).json({ error: 'No reviews found for this ISBN' });
+
+  reviews[isbn] = reviews[isbn].filter(r => r.username !== username);
+
+  res.json({ message: 'Review deleted successfully' });
+});
+
+// Task 10: Get all books (Using async callback)
+app.get('/books/all', async (req, res) => {
+  const response = await axios.get('https://openlibrary.org/search.json?q=book');
+  res.json(response.data.docs.map(book => ({
+    title: book.title,
+    author: book.author_name ? book.author_name[0] : 'Unknown Author'
+  })));
+});
+
+// Task 11: Search by ISBN (Using Promises)
+app.get('/books/promises/isbn/:isbn', (req, res) => {
+  const isbn = req.params.isbn;
+  axios.get(`https://openlibrary.org/search.json?isbn=${isbn}`)
+    .then(response => {
+      const book = response.data.docs[0];
+      if (book) {
+        res.json({ title: book.title, author: book.author_name ? book.author_name[0] : 'Unknown Author' });
+      } else {
+        res.status(404).json({ error: 'No book found with this ISBN' });
+      }
+    })
+    .catch(error => res.status(500).json({ error: 'Error fetching book by ISBN' }));
+});
+
+// Task 12: Search by Author (Using Promises)
+app.get('/books/promises/author/:author', (req, res) => {
+  const author = req.params.author;
+  axios.get(`https://openlibrary.org/search.json?author=${encodeURIComponent(author)}`)
+    .then(response => {
+      const books = response.data.docs.map(book => ({
+        title: book.title,
+        author: book.author_name ? book.author_name[0] : 'Unknown Author'
+      }));
+      res.json(books);
+    })
+    .catch(error => res.status(500).json({ error: 'Error fetching books by author' }));
+});
+
+// Task 13: Search by Title (Using Promises)
+app.get('/books/promises/title/:title', (req, res) => {
+  const title = req.params.title;
+  axios.get(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}`)
+    .then(response => {
+      const books = response.data.docs.map(book => ({
+        title: book.title,
+        author: book.author_name ? book.author_name[0] : 'Unknown Author'
+      }));
+      res.json(books);
+    })
+    .catch(error => res.status(500).json({ error: 'Error fetching books by title' }));
+});
